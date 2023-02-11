@@ -45,11 +45,181 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface* a
 	return true;
 }
 
+char* get_extraeditorID(RE::ExtraDataList* list) { return _generic_foo_<11846, decltype(get_extraeditorID)>::eval(list); }
+
+void set_extraeditorID(RE::ExtraDataList* list, const char* name)
+{
+	return _generic_foo_<11845, decltype(set_extraeditorID)>::eval(list, name);
+}
+
+const char* hideTag = "Hide in inv";
+
+bool is_tagged(RE::InventoryEntryData* item)
+{
+	auto& lists = item->extraLists;
+	if (lists)
+		for (auto it = lists->begin(); it != lists->end(); ++it)
+			if (auto fenix = get_extraeditorID(*it); fenix && !strcmp(fenix, hideTag)) {
+				return true;
+			}
+	return false;
+}
+
+class Settings : SettingsBase
+{
+	static constexpr auto ini_path = "Data/skse/plugins/DeathLosesLoot.ini"sv;
+
+public:
+	static inline std::string esp_name;
+
+	static inline uint32_t prop_id;
+	static inline uint32_t frac_gold_id;
+	static inline uint32_t deny_kwd_id;
+
+	static void ReadSettings()
+	{
+		CSimpleIniA ini;
+		ini.LoadFile(ini_path.data());
+
+		ReadString(ini, "General", "esp", esp_name);
+
+		ReadUint32(ini, "General", "prop", prop_id);
+		ReadUint32(ini, "General", "fracGold", frac_gold_id);
+		ReadUint32(ini, "General", "denyKwd", deny_kwd_id);
+	}
+};
+
+class DataHandler
+{
+	static inline RE::TESGlobal* prop;
+	static inline RE::TESGlobal* frac_gold;
+	static inline RE::BGSKeyword* deny_kwd;
+
+public:
+	static inline RE::TESObjectMISC* gold;
+
+	static void init()
+	{
+		auto datahandler = RE::TESDataHandler::GetSingleton();
+
+		const auto& esp = Settings::esp_name;
+
+		gold = RE::TESForm::LookupByID<RE::TESObjectMISC>(0xf);
+
+		prop = datahandler->LookupForm<RE::TESGlobal>(Settings::prop_id, esp);
+		frac_gold = datahandler->LookupForm<RE::TESGlobal>(Settings::frac_gold_id, esp);
+		deny_kwd = datahandler->LookupForm<RE::BGSKeyword>(Settings::deny_kwd_id, esp);
+	}
+
+	// ret true with prop = val
+	static bool rnd() { return FenixUtils::random_range(0.0f, 1.0f) <= prop->value; }
+
+	// ret cost * frac
+	static float get_cost(uint32_t cost) { return cost * frac_gold->value; }
+
+	static bool has_kwd(RE::Actor* a) { return a->GetBaseObject()->As<RE::TESNPC>()->HasKeyword(deny_kwd); }
+};
+
+class OpenInvHook
+{
+public:
+	static void Hook()
+	{
+		_should_be_displayed = SKSE::GetTrampoline().write_call<5>(REL::ID(50239).address() + 0x13,
+			should_be_displayed);  // SkyrimSE.exe+861560
+	}
+
+private:
+	static bool should_be_displayed(RE::InventoryEntryData* item) { return _should_be_displayed(item) && !is_tagged(item); }
+
+	static inline REL::Relocation<decltype(should_be_displayed)> _should_be_displayed;
+};
+
+void tag_item(RE::InventoryEntryData* item) {
+	auto extralist = new RE::ExtraDataList();
+	set_extraeditorID(extralist, hideTag);
+	item->AddExtraList(extralist);
+}
+
+bool should_tag(RE::InventoryEntryData* item)
+{
+	if (item->IsEnchanted())
+		return false;
+
+	return DataHandler::rnd();
+}
+
+void cleanLoot(RE::Actor* a) {
+	if (DataHandler::has_kwd(a))
+		return;
+
+	class Visitor : public RE::InventoryChanges::IItemChangeVisitor
+	{
+		RE::BSContainer::ForEachResult Visit(RE::InventoryEntryData* item) override
+		{
+			if (should_tag(item)) {
+				tag_item(item);
+				sum += DataHandler::get_cost(item->object->GetGoldValue());
+			}
+
+			return RE::BSContainer::ForEachResult::kContinue;
+		}
+
+	public:
+		float sum = 0;
+	} visitor;
+
+	auto changes = a->GetInventoryChanges();
+	changes->VisitWornItems(visitor);
+
+	auto count = static_cast<uint32_t>(visitor.sum);
+	if (count > 0)
+		FenixUtils::AddItem(a, DataHandler::gold, nullptr, count, nullptr);
+}
+
+class EventHandler : public RE::BSTEventSink<RE::TESDeathEvent>
+{
+public:
+	static EventHandler* GetSingleton()
+	{
+		static EventHandler singleton;
+		return std::addressof(singleton);
+	}
+
+	static void Register()
+	{
+		auto scriptEventSourceHolder = RE::ScriptEventSourceHolder::GetSingleton();
+		scriptEventSourceHolder->GetEventSource<RE::TESDeathEvent>()->AddEventSink(EventHandler::GetSingleton());
+	}
+
+	virtual RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event,
+		RE::BSTEventSource<RE::TESDeathEvent>*) override
+	{
+		if (a_event && !a_event->dead)
+			if (auto a = a_event->actorDying.get(); a && a->As<RE::Actor>())
+				cleanLoot(a->As<RE::Actor>());
+
+		return RE::BSEventNotifyControl::kContinue;
+	}
+
+private:
+	EventHandler() = default;
+	EventHandler(const EventHandler&) = delete;
+	EventHandler(EventHandler&&) = delete;
+	virtual ~EventHandler() = default;
+
+	EventHandler& operator=(const EventHandler&) = delete;
+	EventHandler& operator=(EventHandler&&) = delete;
+};
+
 static void SKSEMessageHandler(SKSE::MessagingInterface::Message* message)
 {
 	switch (message->type) {
 	case SKSE::MessagingInterface::kDataLoaded:
-		//
+		Settings::ReadSettings();
+		EventHandler::Register();
+		OpenInvHook::Hook();
+		DataHandler::init();
 
 		break;
 	}
