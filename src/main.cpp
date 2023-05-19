@@ -56,12 +56,23 @@ const char* hideTag = "Hide in inv";
 
 bool is_tagged(RE::InventoryEntryData* item)
 {
-	auto& lists = item->extraLists;
-	if (lists)
-		for (auto it = lists->begin(); it != lists->end(); ++it)
-			if (auto fenix = get_extraeditorID(*it); fenix && !strcmp(fenix, hideTag)) {
+	if (auto lists = item->extraLists) {
+		auto end = lists->end();
+		for (auto it = lists->begin(); it != end; ++it) {
+			auto& list = *it;
+			if ((list->HasType<RE::ExtraWorn>() || list->HasType<RE::ExtraWornLeft>()) &&
+				list->HasType<RE::ExtraTextDisplayData>()) {
 				return true;
 			}
+		}
+	}
+
+	//auto lists = item->extraLists;
+	//if (lists)
+	//	for (auto it = lists->begin(); it != lists->end(); ++it)
+	//		if (auto fenix = get_extraeditorID(*it); fenix && !strcmp(fenix, hideTag)) {
+	//			return true;
+	//		}
 	return false;
 }
 
@@ -136,9 +147,19 @@ private:
 };
 
 void tag_item(RE::InventoryEntryData* item) {
-	auto extralist = new RE::ExtraDataList();
-	set_extraeditorID(extralist, hideTag);
-	item->AddExtraList(extralist);
+	if (auto lists = item->extraLists) {
+		auto end = lists->end();
+		for (auto it = lists->begin(); it != end; ++it) {
+			auto& list = *it;
+			if (list->HasType<RE::ExtraWorn>() || list->HasType<RE::ExtraWornLeft>()) {
+				list->Add(new RE::ExtraTextDisplayData(hideTag));
+			}
+		}
+	}
+
+	//auto extralist = new RE::ExtraDataList();
+	//set_extraeditorID(extralist, hideTag);
+	//item->AddExtraList(extralist);
 }
 
 bool should_tag(RE::InventoryEntryData* item)
