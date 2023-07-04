@@ -56,23 +56,12 @@ const char* hideTag = "Hide in inv";
 
 bool is_tagged(RE::InventoryEntryData* item)
 {
-	if (auto lists = item->extraLists) {
-		auto end = lists->end();
-		for (auto it = lists->begin(); it != end; ++it) {
-			auto& list = *it;
-			if ((list->HasType<RE::ExtraWorn>() || list->HasType<RE::ExtraWornLeft>()) &&
-				list->HasType<RE::ExtraTextDisplayData>()) {
-				return true;
-			}
+	if (auto lists = item->extraLists; lists && !lists->empty()) {
+		if (auto data = _generic_foo_<11508, RE::ExtraTextDisplayData* (RE::ExtraDataList*)>::eval(*lists->begin())) {
+			return !strcmp(data->displayName.c_str(), hideTag);
 		}
 	}
 
-	//auto lists = item->extraLists;
-	//if (lists)
-	//	for (auto it = lists->begin(); it != lists->end(); ++it)
-	//		if (auto fenix = get_extraeditorID(*it); fenix && !strcmp(fenix, hideTag)) {
-	//			return true;
-	//		}
 	return false;
 }
 
@@ -147,19 +136,15 @@ private:
 };
 
 void tag_item(RE::InventoryEntryData* item) {
-	if (auto lists = item->extraLists) {
-		auto end = lists->end();
-		for (auto it = lists->begin(); it != end; ++it) {
-			auto& list = *it;
-			if (list->HasType<RE::ExtraWorn>() || list->HasType<RE::ExtraWornLeft>()) {
-				list->Add(new RE::ExtraTextDisplayData(hideTag));
-			}
-		}
-	}
+	_generic_foo_<50530, void(void* menu, RE::InventoryEntryData* item, RE::ExtraDataList* extralist, const char* name)>::eval(
+		nullptr, item, nullptr, hideTag);
+}
 
-	//auto extralist = new RE::ExtraDataList();
-	//set_extraeditorID(extralist, hideTag);
-	//item->AddExtraList(extralist);
+void tag_item(RE::InventoryChanges* changes, RE::TESBoundObject* base)
+{
+	auto new_entry = new RE::InventoryEntryData(base, 0);
+	changes->AddEntryData(new_entry);
+	tag_item(new_entry);
 }
 
 bool should_tag(RE::InventoryEntryData* item)
@@ -170,30 +155,59 @@ bool should_tag(RE::InventoryEntryData* item)
 	return DataHandler::rnd();
 }
 
-void cleanLoot(RE::Actor* a) {
+void cleanLoot(RE::Actor* a)
+{
 	if (DataHandler::has_kwd(a))
 		return;
 
-	class Visitor : public RE::InventoryChanges::IItemChangeVisitor
-	{
-		RE::BSContainer::ForEachResult Visit(RE::InventoryEntryData* item) override
-		{
-			if (should_tag(item)) {
-				tag_item(item);
-				sum += DataHandler::get_cost(item->object->GetGoldValue());
-			}
-
-			return RE::BSContainer::ForEachResult::kContinue;
+	float sum = 0;
+	auto _tag_item = [&](RE::InventoryEntryData* entry) {
+		if (should_tag(entry)) {
+			tag_item(entry);
+			sum += DataHandler::get_cost(entry->object->GetGoldValue());
 		}
+	};
 
-	public:
-		float sum = 0;
-	} visitor;
+	std::set<RE::TESBoundObject*> inv;
+	std::set<RE::TESBoundObject*> leveled;
 
 	auto changes = a->GetInventoryChanges();
-	changes->VisitWornItems(visitor);
+	if (changes && changes->entryList) {
+		for (auto entry : *changes->entryList) {
+			if (entry && entry->object) {
+				_tag_item(entry);
+				inv.insert(entry->object);
+				if (entry->IsLeveled())
+					leveled.insert(entry->object);
+			}
+		}
+	}
 
-	auto count = static_cast<uint32_t>(visitor.sum);
+	auto container = a->GetContainer();
+	if (container) {
+		const auto ignore = [&](RE::TESBoundObject* a_object) {
+			const auto it = inv.find(a_object);
+			return it != inv.end() && leveled.find(a_object) != leveled.end();
+		};
+
+		container->ForEachContainerObject([&](RE::ContainerObject& a_entry) {
+			auto obj = a_entry.obj;
+			if (obj && !ignore(obj)) {
+				auto it = inv.find(obj);
+				if (it == inv.end()) {
+					// TODO: ench item from start?
+					if (DataHandler::rnd()) {
+						inv.insert(obj);  // TODO: useless?
+						tag_item(changes, obj);
+						sum += DataHandler::get_cost(obj->GetGoldValue());
+					}
+				}
+			}
+			return RE::BSContainer::ForEachResult::kContinue;
+		});
+	}
+
+	auto count = static_cast<uint32_t>(sum);
 	if (count > 0)
 		FenixUtils::AddItem(a, DataHandler::gold, nullptr, count, nullptr);
 }
