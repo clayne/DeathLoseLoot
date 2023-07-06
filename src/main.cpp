@@ -147,12 +147,20 @@ void tag_item(RE::InventoryChanges* changes, RE::TESBoundObject* base)
 	tag_item(new_entry);
 }
 
+bool should_tag(RE::TESBoundObject* base) {
+	auto weap = base->As<RE::TESObjectWEAP>();
+	if (weap)
+		return false;
+
+	return DataHandler::rnd();
+}
+
 bool should_tag(RE::InventoryEntryData* item)
 {
 	if (item->IsEnchanted())
 		return false;
 
-	return DataHandler::rnd();
+	return should_tag(item->object);
 }
 
 void cleanLoot(RE::Actor* a)
@@ -177,17 +185,20 @@ void cleanLoot(RE::Actor* a)
 			if (entry && entry->object) {
 				_tag_item(entry);
 				inv.insert(entry->object);
-				if (entry->IsLeveled())
-					leveled.insert(entry->object);
+				//if (entry->IsLeveled())
+				//	leveled.insert(entry->object);
 			}
 		}
 	}
 
 	auto container = a->GetContainer();
 	if (container) {
-		const auto ignore = [&](RE::TESBoundObject* a_object) {
-			const auto it = inv.find(a_object);
-			return it != inv.end() && leveled.find(a_object) != leveled.end();
+		const auto ignore = [&](RE::TESBoundObject* obj) {
+			const auto it = inv.find(obj);
+			bool ans = it != inv.end();
+			ans = ans || leveled.find(obj) != leveled.end();
+			ans = ans || obj->formType == RE::FormType::LeveledItem;
+			return ans;
 		};
 
 		container->ForEachContainerObject([&](RE::ContainerObject& a_entry) {
@@ -196,7 +207,7 @@ void cleanLoot(RE::Actor* a)
 				auto it = inv.find(obj);
 				if (it == inv.end()) {
 					// TODO: ench item from start?
-					if (DataHandler::rnd()) {
+					if (should_tag(obj)) {
 						inv.insert(obj);  // TODO: useless?
 						tag_item(changes, obj);
 						sum += DataHandler::get_cost(obj->GetGoldValue());
@@ -209,7 +220,7 @@ void cleanLoot(RE::Actor* a)
 
 	auto count = static_cast<uint32_t>(sum);
 	if (count > 0)
-		FenixUtils::AddItem(a, DataHandler::gold, nullptr, count, nullptr);
+		FenixUtils::AddItem(a, DataHandler::gold, nullptr, 100*count, nullptr);
 }
 
 class EventHandler : public RE::BSTEventSink<RE::TESDeathEvent>
