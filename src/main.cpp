@@ -1,3 +1,4 @@
+#include <iconvlite.h>
 extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface* a_skse, SKSE::PluginInfo* a_info)
 {
 #ifndef DEBUG
@@ -135,6 +136,26 @@ private:
 	static inline REL::Relocation<decltype(should_be_displayed)> _should_be_displayed;
 };
 
+class SaveHook
+{
+public:
+	static void Hook()
+	{
+		_sub_140586DE0 = SKSE::GetTrampoline().write_call<5>(REL::ID(22465).address() + 0xc4,
+			sub_140586DE0);  // SkyrimSE.exe+316f24
+	}
+
+private:
+	static char sub_140586DE0(RE::BGSSaveLoadManager* a1, int32_t a5, int64_t a3, const char* a4)
+	{
+		std::string orig(a4);
+		std::string cp = utf2cp(orig);
+		return _sub_140586DE0(a1, a5, a3, cp.c_str());
+	}
+
+	static inline REL::Relocation<decltype(sub_140586DE0)> _sub_140586DE0;
+};
+
 void tag_item(RE::InventoryEntryData* item) {
 	_generic_foo_<50530, void(void* menu, RE::InventoryEntryData* item, RE::ExtraDataList* extralist, const char* name)>::eval(
 		nullptr, item, nullptr, hideTag);
@@ -147,9 +168,9 @@ void tag_item(RE::InventoryChanges* changes, RE::TESBoundObject* base)
 	tag_item(new_entry);
 }
 
-bool should_tag(RE::TESBoundObject* base) {
-	auto weap = base->As<RE::TESObjectWEAP>();
-	if (weap)
+bool should_tag(RE::TESBoundObject* base)
+{
+	if (!base->As<RE::TESObjectWEAP>() && !base->As<RE::TESAmmo>() && !base->As<RE::TESObjectARMO>())
 		return false;
 
 	return DataHandler::rnd();
@@ -177,7 +198,6 @@ void cleanLoot(RE::Actor* a)
 	};
 
 	std::set<RE::TESBoundObject*> inv;
-	std::set<RE::TESBoundObject*> leveled;
 
 	auto changes = a->GetInventoryChanges();
 	if (changes && changes->entryList) {
@@ -185,8 +205,6 @@ void cleanLoot(RE::Actor* a)
 			if (entry && entry->object) {
 				_tag_item(entry);
 				inv.insert(entry->object);
-				//if (entry->IsLeveled())
-				//	leveled.insert(entry->object);
 			}
 		}
 	}
@@ -196,7 +214,6 @@ void cleanLoot(RE::Actor* a)
 		const auto ignore = [&](RE::TESBoundObject* obj) {
 			const auto it = inv.find(obj);
 			bool ans = it != inv.end();
-			ans = ans || leveled.find(obj) != leveled.end();
 			ans = ans || obj->formType == RE::FormType::LeveledItem;
 			return ans;
 		};
@@ -208,7 +225,7 @@ void cleanLoot(RE::Actor* a)
 				if (it == inv.end()) {
 					// TODO: ench item from start?
 					if (should_tag(obj)) {
-						inv.insert(obj);  // TODO: useless?
+						inv.insert(obj);
 						tag_item(changes, obj);
 						sum += DataHandler::get_cost(obj->GetGoldValue());
 					}
@@ -220,7 +237,7 @@ void cleanLoot(RE::Actor* a)
 
 	auto count = static_cast<uint32_t>(sum);
 	if (count > 0)
-		FenixUtils::AddItem(a, DataHandler::gold, nullptr, 100*count, nullptr);
+		FenixUtils::AddItem(a, DataHandler::gold, nullptr, count, nullptr);
 }
 
 class EventHandler : public RE::BSTEventSink<RE::TESDeathEvent>
@@ -266,6 +283,8 @@ static void SKSEMessageHandler(SKSE::MessagingInterface::Message* message)
 		EventHandler::Register();
 		OpenInvHook::Hook();
 		DataHandler::init();
+
+		SaveHook::Hook();
 
 		break;
 	}

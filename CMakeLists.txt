@@ -87,6 +87,9 @@ find_package(spdlog REQUIRED CONFIG)
 set(SOURCES
 	src/main.cpp
 	src/PCH.h
+	src/iconvlite.h
+	src/iconvlite.cpp
+
 )
 
 source_group(
